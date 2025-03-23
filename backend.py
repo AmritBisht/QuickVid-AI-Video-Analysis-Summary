@@ -21,6 +21,9 @@ import io
 import tempfile
 import shutil
 import google.generativeai as genai
+from pydub import AudioSegment
+import speech_recognition as sr
+from fastapi import HTTPException
 
 
 # Download NLTK resources
@@ -149,6 +152,38 @@ def extract_keywords(text, num_keywords=10):
         print(f"Error extracting keywords: {str(e)}")
         return []
 
+
+def split_and_transcribe(audio_path, language="en-US", chunk_length_ms=60000):
+    try:
+        audio = AudioSegment.from_wav(audio_path)
+        recognizer = sr.Recognizer()
+
+        # Split the audio into chunks of 60 seconds
+        chunks = [audio[i:i + chunk_length_ms] for i in range(0, len(audio), chunk_length_ms)]
+        transcript = []
+
+        for i, chunk in enumerate(chunks):
+            chunk_path = f"{audio_path}_chunk_{i}.wav"
+            chunk.export(chunk_path, format="wav")
+
+            with sr.AudioFile(chunk_path) as source:
+                audio_data = recognizer.record(source)
+
+                try:
+                    # Perform speech recognition on each chunk
+                    text = recognizer.recognize_google(audio_data, language=language)
+                    transcript.append(text)
+                except sr.UnknownValueError:
+                    transcript.append(f"[Chunk {i}: Speech not recognized]")
+                except sr.RequestError as e:
+                    raise HTTPException(status_code=500, detail=f"API Error: {e}")
+
+        return " ".join(transcript)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Audio processing failed: {e}")
+
+
+
 def get_summary_prompt(text, options):
     format_instruction = ""
     length_instruction = ""
@@ -233,7 +268,6 @@ async def summarize_upload(
     include_keywords: bool = Query(False)
 ):
     try:
-        # Create options object
         options = SummaryOptions(
             format=format,
             length=length,
@@ -241,35 +275,36 @@ async def summarize_upload(
             include_sentiment=include_sentiment,
             include_keywords=include_keywords
         )
-        # Create temp directory
+
         temp_dir = tempfile.mkdtemp()
         try:
-            # Save uploaded file
             file_path = os.path.join(temp_dir, file.filename)
             with open(file_path, "wb") as f:
                 content = await file.read()
                 f.write(content)
-            # Extract audio and transcribe
-            video = mp.VideoFileClip(file_path)
+
+            video = VideoFileClip(file_path)
             audio_path = os.path.join(temp_dir, "temp_audio.wav")
-            video.audio.write_audiofile(audio_path, verbose=False, logger=None)
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(audio_path) as source:
-                audio = recognizer.record(source)
-                transcript = recognizer.recognize_google(audio)
-            # Generate summary
+            video.audio.write_audiofile(audio_path, codec='pcm_s16le', fps=16000, verbose=False, logger=None)
+
+            if not os.path.exists(audio_path) or os.path.getsize(audio_path) == 0:
+                raise HTTPException(status_code=500, detail="Audio extraction failed or resulted in an empty file")
+
+            # Transcribe using the split and transcribe function
+            transcript = split_and_transcribe(audio_path, language=language)
+
             summary = summarize_text(transcript, options)
-            # Additional analyses
             metadata = {
                 "filename": file.filename,
                 "duration_seconds": video.duration,
                 "timestamp": datetime.now().isoformat()
             }
+
             if include_sentiment:
                 metadata["sentiment"] = analyze_sentiment(transcript)
             if include_keywords:
                 metadata["keywords"] = extract_keywords(transcript)
-            # Create response
+
             summary_id = str(uuid.uuid4())
             response = {
                 "id": summary_id,
@@ -277,14 +312,13 @@ async def summarize_upload(
                 "transcript": transcript,
                 "metadata": metadata
             }
-            # Store in database
             SUMMARIES_DB.append(response)
             return response
         finally:
-            # Clean up temp directory
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/summaries")
 async def get_summaries():

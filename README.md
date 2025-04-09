@@ -80,18 +80,14 @@ Open your browser and go to **`http://localhost:8501`**
 
 ```
 📂 video-analysis-summary
-│── 📂 backend/               # FastAPI backend
-│   │── backend.py            # Main API server
-│   │── models.py             # Data models
-│   │── summarizer.py         # AI-based summarization logic
-│   │── speech_to_text.py     # Speech recognition module
-│   │── sentiment_analysis.py # Sentiment analysis module
-│   │── requirements.txt      # Backend dependencies
+│──│── backend.py            # Main API server
+│   │── models              # Data models
+│   │── summarizer          # AI-based summarization logic
+│   │── speech_to_text      # Speech recognition module
+│   │── sentiment_analysis  # Sentiment analysis module
 │
 │── 📂 frontend/              # Streamlit frontend
 │   │── app.py                # Main Streamlit app
-│   │── components.py         # UI components
-│   │── styles.css            # Custom styling
 │
 │── 📂 data/                  # Storage for processed data
 │── 📂 logs/                  # Logs for debugging
